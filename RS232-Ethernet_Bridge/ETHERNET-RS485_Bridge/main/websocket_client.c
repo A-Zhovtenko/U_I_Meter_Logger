@@ -28,8 +28,8 @@
 //static uint32_t last_modbus_tick = 0;
 //static uint32_t last_pi30_tick   = 0;
 
-static const TickType_t WS_TIMEOUT_TICKS = pdMS_TO_TICKS(20000); // 20 секунд
 static const TickType_t WS_CONNECT_GRACE_TICKS = pdMS_TO_TICKS(10000);
+static const TickType_t WS_HARD_RECONNECT_TICKS = pdMS_TO_TICKS(300000);
 // переменные для авторизации
  char ws_email[64];
  char ws_password[64];
@@ -38,6 +38,7 @@ static const TickType_t WS_CONNECT_GRACE_TICKS = pdMS_TO_TICKS(10000);
 
 static bool ws_reconnect_in_progress = false;
 static TickType_t last_ws_start_tick = 0;
+static TickType_t last_ws_disconnected_tick = 0;
 extern bool test_account_active;// из ws_server.c 
 extern void ws_broadcast(const char *text);
 extern httpd_handle_t server;
@@ -91,17 +92,20 @@ void websocket_enable_reconnect(void)
 
         if (!ws_connected) {
             TickType_t now = xTaskGetTickCount();
-            if (client && (now - last_ws_start_tick) < WS_CONNECT_GRACE_TICKS) {
-                vTaskDelay(check_interval);
-                continue;
+            if (client) {
+                if (last_ws_disconnected_tick == 0) {
+                    last_ws_disconnected_tick = now;
+                }
+
+                if ((now - last_ws_start_tick) < WS_CONNECT_GRACE_TICKS ||
+                    (now - last_ws_disconnected_tick) < WS_HARD_RECONNECT_TICKS) {
+                    vTaskDelay(check_interval);
+                    continue;
+                }
+
+                ESP_LOGW(TAG, "⚠️ WS disconnected for too long, forcing hard reconnect");
             }
             need_reconnect = true;
-        } else {
-            TickType_t now = xTaskGetTickCount();
-            if ((now - last_ws_event_tick) > WS_TIMEOUT_TICKS) {
-                ESP_LOGW(TAG, "⚠️ No WS activity for 20 seconds, forcing reconnect");
-                need_reconnect = true;
-            }
         }
 
         if (need_reconnect) {
@@ -159,6 +163,7 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
                 ESP_LOGI(TAG, "📤Sent auth message:%s", auth_msg);
             }
             ws_connected = true;
+            last_ws_disconnected_tick = 0;
            //  gpio_set_net_led(true);
              ws_broadcast("{\"cloud_status\":\"Connecting...\"}");
              last_ws_event_tick = xTaskGetTickCount(); // фиксируем активность
@@ -270,6 +275,7 @@ esp_err_t websocket_client_start(const char *session_id, const char *email, cons
     );
 
     last_ws_start_tick = xTaskGetTickCount();
+    last_ws_disconnected_tick = last_ws_start_tick;
     esp_err_t err = esp_websocket_client_start(client);
 
     if (err != ESP_OK) {
