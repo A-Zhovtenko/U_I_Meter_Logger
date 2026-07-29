@@ -615,42 +615,45 @@ if (strcmp(category, "uart") == 0)
             // ==========================================================
             if (strcmp(category, "system") == 0)
             {
-                char value[32] = {0};
-                char *sys_ptr = strstr(settings_ptr, "\"system\"");
-                if (sys_ptr)
+                const char *value = NULL;
+                cJSON *system_item = cJSON_GetObjectItem(settings, "system");
+
+                if (cJSON_IsString(system_item))
                 {
-                    char *s = strchr(sys_ptr, ':');
-                    if (s && (s = strchr(s, '"')))
-                    {
-                        s++;
-                        char *e = strchr(s, '"');
-                        if (e)
-                        {
-                            int l = e - s;
-                            if (l < sizeof(value))
-                            {
-                                memcpy(value, s, l);
-                                value[l] = 0;
-                            }
-                        }
-                    }
+                    value = system_item->valuestring;
+                }
+                else if (cJSON_IsObject(system_item))
+                {
+                    cJSON *action = cJSON_GetObjectItem(system_item, "action");
+                    cJSON *command = cJSON_GetObjectItem(system_item, "command");
+
+                    if (cJSON_IsString(action))
+                        value = action->valuestring;
+                    else if (cJSON_IsString(command))
+                        value = command->valuestring;
                 }
 
-                ESP_LOGI(TAG, "🛠 System command: %s", value);
+                ESP_LOGI(TAG, "🛠 System command: %s", value ? value : "");
 
                 // ==================================================
                 // REBOOT
                 // ==================================================
-                if (strcmp(value, "reboot") == 0)
+                if (value && strcmp(value, "reboot") == 0)
                 {
                     ESP_LOGW(TAG, "🔄 Reboot command received");
                   //  websocket_send_text( "{\"command_type\":\"set_settings_ack\",\"status\":\"ok\",\"action\":\"reboot\"}");
                     send_ack("System reboot");
+                    cJSON_Delete(root);
                     vTaskDelay(pdMS_TO_TICKS(500)); // дать уйти ack
                     esp_restart();
                 }
+
+                cJSON_Delete(root);
+                send_action_ack("system");
+                gpio_link_led(0);
+                return true;
             }
-          
+
             send_action_ack("reboot");
              gpio_link_led(0);
             return true;
@@ -658,5 +661,4 @@ if (strcmp(category, "uart") == 0)
     gpio_link_led(0);
     return true;
 }
-
 

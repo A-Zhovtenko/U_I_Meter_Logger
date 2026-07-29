@@ -29,6 +29,7 @@
 //static uint32_t last_pi30_tick   = 0;
 
 static const TickType_t WS_TIMEOUT_TICKS = pdMS_TO_TICKS(20000); // 20 секунд
+static const TickType_t WS_CONNECT_GRACE_TICKS = pdMS_TO_TICKS(10000);
 // переменные для авторизации
  char ws_email[64];
  char ws_password[64];
@@ -36,6 +37,7 @@ static const TickType_t WS_TIMEOUT_TICKS = pdMS_TO_TICKS(20000); // 20 секу�
  char ws_session_id[128] = {0};
 
 static bool ws_reconnect_in_progress = false;
+static TickType_t last_ws_start_tick = 0;
 extern bool test_account_active;// из ws_server.c 
 extern void ws_broadcast(const char *text);
 extern httpd_handle_t server;
@@ -88,6 +90,11 @@ void websocket_enable_reconnect(void)
         bool need_reconnect = false;
 
         if (!ws_connected) {
+            TickType_t now = xTaskGetTickCount();
+            if (client && (now - last_ws_start_tick) < WS_CONNECT_GRACE_TICKS) {
+                vTaskDelay(check_interval);
+                continue;
+            }
             need_reconnect = true;
         } else {
             TickType_t now = xTaskGetTickCount();
@@ -262,6 +269,7 @@ esp_err_t websocket_client_start(const char *session_id, const char *email, cons
         esp_websocket_register_events(client, WEBSOCKET_EVENT_ANY, websocket_event_handler, NULL)
     );
 
+    last_ws_start_tick = xTaskGetTickCount();
     esp_err_t err = esp_websocket_client_start(client);
 
     if (err != ESP_OK) {
